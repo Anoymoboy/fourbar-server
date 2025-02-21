@@ -162,7 +162,8 @@ app.post('/compute', (req, res) => {
 });
 
 // Start the server
-const PORT = 3000; // or any port you like
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Server listening on http://localhost:${PORT}`);
+  console.log(`Server is running on port ${PORT}...`);
 });
+
