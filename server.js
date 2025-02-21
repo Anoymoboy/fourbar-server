@@ -7,14 +7,20 @@ const math = require('mathjs');
 const app = express();
 app.use(express.json());
 
-// Utility: convert degrees -> radians
+// Utility: degrees -> radians
 function degToRad(deg) {
   return (deg * Math.PI) / 180;
 }
 
-// Utility: convert radians -> degrees
+// Utility: radians -> degrees
 function radToDeg(rad) {
   return (rad * 180) / Math.PI;
+}
+
+// Utility: normalize angle 0–360 (optional)
+function normalizeAngle(angleDeg) {
+  let a = angleDeg % 360;
+  return a < 0 ? a + 360 : a;
 }
 
 /**
@@ -33,92 +39,94 @@ function grashofCondition(a, b, c, d) {
   const SL = S + L;
 
   if (SL < PQ) return 'Grashof';
-  if (Math.abs(SL - PQ) < 1e-9) return 'Special Grashof'; // allow small float tolerance
+  if (Math.abs(SL - PQ) < 1e-9) return 'Special Grashof';
   return 'non-Grashof';
 }
 
 /**
- * Compute the four-bar “open” and “crossed” solutions for theta3 and theta4
- * using one common version of the vector-loop approach.
+ * Compute the four-bar open/crossed solutions for theta3 and theta4
  */
 function computeFourBar(a, b, c, d, theta2_deg) {
-  // Convert input angle to radians for math trig
   const theta2 = degToRad(theta2_deg);
 
-  // =============== 1) Compute theta4 (eqn 4.10b-like) ===============
-
-  // Example definitions from references (adapt for your sign conventions):
-  // K1 = d/c
-  // K2 = d/b
-  // K3 = (a^2 - b^2 + c^2 + d^2) / (2*a*c)
-  const K1 = d / c;
+  // K values for eqns
+  const K1 = d / c; 
   const K2 = d / b;
-  const K3 = (a ** 2 - b ** 2 + c ** 2 + d ** 2) / (2 * a * c);
+  const K3 = (a**2 - b**2 + c**2 + d**2) / (2*a*c);
 
-  // A = cos(theta2) - K1 - K2*cos(theta2) + K3
-  // B = -2*sin(theta2)
-  // C = K1 - (K2 - 1)*cos(theta2) + K3
+  // A, B, C for the eqn of theta4
   const A = Math.cos(theta2) - K1 - K2 * Math.cos(theta2) + K3;
   const B = -2 * Math.sin(theta2);
   const C = K1 - (K2 - 1) * Math.cos(theta2) + K3;
 
-  // open-circuit solution
-  //   theta4_1 = 2 * atan2(2*A, -B - sqrt(B^2 - 4*A*C))
-  const partOpen = -B - math.sqrt(B * B - 4 * A * C);
-  const theta4_1_rad = 2 * Math.atan2(2 * A, partOpen);
+  console.log('--- theta4 intermediate values ---');
+  console.log({
+    A,
+    B,
+    C,
+    sqrtTerm: B*B - 4*A*C
+  });
 
-  // crossed-circuit solution
-  //   theta4_2 = 2 * atan2(2*A, -B + sqrt(B^2 - 4*A*C))
-  const partCross = -B + math.sqrt(B * B - 4 * A * C);
-  const theta4_2_rad = 2 * Math.atan2(2 * A, partCross);
+  let theta41 = null;
+  let theta42 = null;
 
-  // Convert back to degrees (clean up any angle beyond ±180 to 0–360 if desired)
-  let theta41 = radToDeg(theta4_1_rad);
-  let theta42 = radToDeg(theta4_2_rad);
+  // Check if sqrt is negative => imaginary
+  const sqrtVal4 = B*B - 4*A*C;
+  if (sqrtVal4 < 0) {
+    console.log('sqrtTerm < 0 for theta4 => no real solutions. Setting theta4 to null.');
+  } else {
+    const root4 = math.sqrt(sqrtVal4);
 
-  // =============== 2) Compute theta3 (eqn 4.13-like) ===============
+    // open-circuit solution
+    const partOpen4 = -B - root4;
+    const theta4_1_rad = 2 * Math.atan2(2 * A, partOpen4);
+    theta41 = normalizeAngle(radToDeg(theta4_1_rad));
 
-  // Similarly define K4, K5, D, E, F from your references:
-  // K4 = d / b   (already have K2 = d/b, so K4 = K2, but let's keep naming clear)
-  // K5 = (c^2 - d^2 + a^2 + b^2) / (2*a*b)
+    // crossed-circuit solution
+    const partCross4 = -B + root4;
+    const theta4_2_rad = 2 * Math.atan2(2 * A, partCross4);
+    theta42 = normalizeAngle(radToDeg(theta4_2_rad));
+  }
+
+  // Now for theta3
   const K4 = d / b; 
-  const K5 = (c ** 2 - d ** 2 + a ** 2 + b ** 2) / (2 * a * b);
+  const K5 = (c**2 - d**2 + a**2 + b**2) / (2*a*b);
 
-  // D = cos(theta2) - K4 - ...
-  // E = -2 sin(theta2)
-  // F = ...
-  // The exact expressions can differ, but commonly:
-  //   D = cos(theta2) - K4*cos(theta2) + K5
-  //   E = -2*sin(theta2)
-  //   F = K4 - (1 - K4)*cos(theta2) + K5
-  // or so.  Adjust to match your text if needed.
+  // D, E, F for the eqn of theta3
   const D = Math.cos(theta2) - K4 * Math.cos(theta2) + K5;
   const E = -2 * Math.sin(theta2);
-  // For instance:
   const F = K4 - (1 - K4) * Math.cos(theta2) + K5;
 
-  // open-circuit solution for theta3
-  //   theta3_1 = 2 * atan2(2*D, -E - sqrt(E^2 - 4*D*F))
-  const partOpen3 = -E - math.sqrt(E * E - 4 * D * F);
-  const theta3_1_rad = 2 * Math.atan2(2 * D, partOpen3);
-  let theta31 = radToDeg(theta3_1_rad);
+  console.log('--- theta3 intermediate values ---');
+  console.log({
+    D,
+    E,
+    F,
+    sqrtTerm: E*E - 4*D*F
+  });
 
-  // crossed-circuit solution for theta3
-  //   theta3_2 = 2 * atan2(2*D, -E + sqrt(E^2 - 4*D*F))
-  const partCross3 = -E + math.sqrt(E * E - 4 * D * F);
-  const theta3_2_rad = 2 * Math.atan2(2 * D, partCross3);
-  let theta32 = radToDeg(theta3_2_rad);
+  let theta31 = null;
+  let theta32 = null;
 
-  // OPTIONAL: normalize angles to 0–360
-  function normalizeAngle(angleDeg) {
-    let a = angleDeg % 360;
-    return a < 0 ? a + 360 : a;
+  // Check if sqrt is negative => imaginary
+  const sqrtVal3 = E*E - 4*D*F;
+  if (sqrtVal3 < 0) {
+    console.log('sqrtTerm < 0 for theta3 => no real solutions. Setting theta3 to null.');
+  } else {
+    const root3 = math.sqrt(sqrtVal3);
+
+    // open-circuit solution
+    const partOpen3 = -E - root3;
+    const theta3_1_rad = 2 * Math.atan2(2 * D, partOpen3);
+    theta31 = normalizeAngle(radToDeg(theta3_1_rad));
+
+    // crossed-circuit solution
+    const partCross3 = -E + root3;
+    const theta3_2_rad = 2 * Math.atan2(2 * D, partCross3);
+    theta32 = normalizeAngle(radToDeg(theta3_2_rad));
   }
-  theta41 = normalizeAngle(theta41);
-  theta42 = normalizeAngle(theta42);
-  theta31 = normalizeAngle(theta31);
-  theta32 = normalizeAngle(theta32);
 
+  // Return all angles
   return {
     theta41,
     theta42,
@@ -127,33 +135,31 @@ function computeFourBar(a, b, c, d, theta2_deg) {
   };
 }
 
-// Our main endpoint: POST /compute
-// Expects JSON like: { "a": <num>, "b": <num>, "c": <num>, "d": <num>, "theta2": <num> }
+// POST /compute
 app.post('/compute', (req, res) => {
   try {
     const { a, b, c, d, theta2 } = req.body;
-    if (
-      a == null ||
-      b == null ||
-      c == null ||
-      d == null ||
-      theta2 == null
-    ) {
+    if (a == null || b == null || c == null || d == null || theta2 == null) {
       return res.status(400).json({
         error: 'Missing one of the required fields: a, b, c, d, theta2'
       });
     }
 
-    // 1) Compute the angles
+    console.log('Received data:', req.body);
+
+    // 1) Compute angles
     const angles = computeFourBar(a, b, c, d, theta2);
 
-    // 2) Compute Grashof condition
+    // 2) Grashof condition
     const grashof = grashofCondition(a, b, c, d);
 
-    // Return the result
-    return res.json({
+    // Return JSON
+    res.json({
       grashof,
-      ...angles
+      theta41: angles.theta41,
+      theta42: angles.theta42,
+      theta31: angles.theta31,
+      theta32: angles.theta32
     });
   } catch (err) {
     console.error('Error in /compute:', err);
@@ -161,9 +167,8 @@ app.post('/compute', (req, res) => {
   }
 });
 
-// Start the server
+// Listen on process.env.PORT or 3000 for local dev
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}...`);
+  console.log(`Server running on port ${PORT}...`);
 });
-
